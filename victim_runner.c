@@ -16,7 +16,6 @@
 
 #define FIXED_ADDR ((void*)0x500000000000ULL)
 #define TTABLE_SIZE 4096
-#define VICTIM_KEY0 0x00
 
 typedef uint32_t *(*get_ttable_address_fn)(void);
 typedef void (*aes_round1_fn)(const uint8_t*,const uint8_t*,uint8_t*);
@@ -149,8 +148,7 @@ int main(int argc,char **argv){
     //this remains victim-side lab configuration.
     //the attacker does not obtain it from the AES API.
     uint8_t key[16]={
-        VICTIM_KEY0,
-        0x13,0x24,0xf3,
+        0x00,0x13,0x24,0xf3,
         0xd8,0x5a,0x16,0x07,
         0x0c,0xc3,0xaf,0x4b,
         0x8a,0x3d,0xd5,0x69
