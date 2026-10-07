@@ -1320,7 +1320,7 @@ int main(int argc,char **argv){
     uint8_t real_key[16];
 
     for(int i=0;i<16;i++){
-        real_key[i]=control->real_key_key[i];
+        real_key[i]=control->real_key[i];
     }
 
     int matches=0;
