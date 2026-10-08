@@ -13,5 +13,6 @@ void aes_round1(const uint8_t *plaintext,const uint8_t *key,uint8_t *out);
 void aes_round2(const uint8_t *plaintext,const uint8_t *key,uint8_t *out);
 int aes_sleep_mode_enabled(void);
 void aes_round2_windowed(const uint8_t *plaintext,const uint8_t *key,uint8_t *out, uint64_t *tsc_r1_start, uint64_t *tsc_r1_end,uint64_t *tsc_r2_start,uint64_t *tsc_r2_end);
+void aes_round3_windowed(const uint8_t *plaintext,const uint8_t *key,uint8_t *out, uint64_t *tsc_r1_start, uint64_t *tsc_r1_end,uint64_t *tsc_r2_start,uint64_t *tsc_r2_end,uint64_t *tsc_r3_start);
 
 #endif

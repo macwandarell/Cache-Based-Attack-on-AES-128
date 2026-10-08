@@ -21,6 +21,7 @@ typedef uint32_t *(*get_ttable_address_fn)(void);
 typedef void (*aes_round1_fn)(const uint8_t*,const uint8_t*,uint8_t*);
 typedef void (*aes_round2_fn)(const uint8_t*,const uint8_t*,uint8_t*);
 typedef void (*aes_round2_windowed_fn)(const uint8_t*,const uint8_t*,uint8_t*,uint64_t*,uint64_t*,uint64_t*,uint64_t*);
+typedef void (*aes_round3_windowed_fn)(const uint8_t*,const uint8_t*,uint8_t*,uint64_t*,uint64_t*,uint64_t*,uint64_t*,uint64_t*);
 typedef int (*aes_sleep_mode_enabled_fn)(void);
 
 //error
@@ -118,6 +119,14 @@ int main(int argc,char **argv){
     error=dlerror();
     if(error!=NULL||aes_round2_windowed==NULL){
         fprintf(stderr,"[-] aes_round2_windowed: %s\n",error?error:"unknown");
+        return EXIT_FAILURE;
+    }
+
+    dlerror();
+    aes_round3_windowed_fn aes_round3_windowed=(aes_round3_windowed_fn)dlsym(handle,"aes_round3_windowed");
+    error=dlerror();
+    if(error!=NULL||aes_round3_windowed==NULL){
+        fprintf(stderr,"[-] aes_round3_windowed: %s\n",error?error:"unknown");
         return EXIT_FAILURE;
     }
 
@@ -226,6 +235,31 @@ int main(int argc,char **argv){
             control->round1_end_tsc=tsc_r1_end;
             control->round2_start_tsc=tsc_r2_start;
             control->round2_end_tsc=tsc_r2_end;
+        }
+
+        //three-round aes, windowed
+        //no internal flush between any rounds.
+        //execution continues naturally through round 3; the victim is
+        //never stopped at a round boundary. Only round3_start is reported
+        //back (round-3 end is not needed by the attacker).
+        else if(mode==CONTROL_MODE_ROUND3_NOFLUSH){
+            uint64_t tsc_r1_start=0;
+            uint64_t tsc_r1_end=0;
+            uint64_t tsc_r2_start=0;
+            uint64_t tsc_r2_end=0;
+            uint64_t tsc_r3_start=0;
+
+            aes_round3_windowed(plaintext,key,output,&tsc_r1_start,&tsc_r1_end,&tsc_r2_start,&tsc_r2_end,&tsc_r3_start);
+
+            for(int i=0;i<16;i++){
+                control->last_round2_output[i]=output[i];
+            }
+
+            control->round1_start_tsc=tsc_r1_start;
+            control->round1_end_tsc=tsc_r1_end;
+            control->round2_start_tsc=tsc_r2_start;
+            control->round2_end_tsc=tsc_r2_end;
+            control->round3_start_tsc=tsc_r3_start;
         }
 
         else{

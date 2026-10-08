@@ -137,6 +137,50 @@ static void expand_round_key_1(const uint8_t *key,uint8_t *round_key_1){
     }
 }
 
+//round-2 key expansion (derived from round_key_1, same schedule step applied again)
+
+static void expand_round_key_2(const uint8_t *round_key_1,uint8_t *round_key_2){
+    uint8_t w0[4];
+    uint8_t w1[4];
+    uint8_t w2[4];
+    uint8_t w3[4];
+    uint8_t t[4];
+
+    for(int i=0;i<4;i++){
+        w0[i]=round_key_1[i];
+        w1[i]=round_key_1[i+4];
+        w2[i]=round_key_1[i+8];
+        w3[i]=round_key_1[i+12];
+    }
+
+    t[0]=w3[1];
+    t[1]=w3[2];
+    t[2]=w3[3];
+    t[3]=w3[0];
+    for(int i=0;i<4;i++){
+        t[i]=Sbox[t[i]];
+    }
+    t[0]^=0x02;
+    uint8_t w4[4];
+    uint8_t w5[4];
+    uint8_t w6[4];
+    uint8_t w7[4];
+
+    for(int i=0;i<4;i++){
+        w4[i]=w0[i]^t[i];
+        w5[i]=w1[i]^w4[i];
+        w6[i]=w2[i]^w5[i];
+        w7[i]=w3[i]^w6[i];
+    }
+
+    for(int i=0;i<4;i++){
+        round_key_2[i]=w4[i];
+        round_key_2[i+4]=w5[i];
+        round_key_2[i+8]=w6[i];
+        round_key_2[i+12]=w7[i];
+    }
+}
+
 //internal flush
 
 static void flush_ttables_internal(void){
@@ -194,7 +238,7 @@ static inline void aes_phase_delay(void){
 int aes_sleep_mode_enabled(void){
     #ifdef AES_SLEEP_MODE
         return 1;
-    #else  
+    #else
         return 0;
     #endif
 }
@@ -223,7 +267,7 @@ void aes_round2_windowed(const uint8_t *plaintext,const uint8_t *key,uint8_t *ou
         state1[i]=state1_prekey[i]^round_key_1[i];
     }
     aes_phase_delay();
-    
+
     t_r2_start=__rdtscp(&aux);
     round_ttable_core(state1,out);
     t_r2_end=__rdtscp(&aux);
@@ -231,4 +275,65 @@ void aes_round2_windowed(const uint8_t *plaintext,const uint8_t *key,uint8_t *ou
     if(tsc_r1_end!=NULL){*tsc_r1_end=t_r1_end;}
     if(tsc_r2_start!=NULL){*tsc_r2_start=t_r2_start;}
     if(tsc_r2_end!=NULL){*tsc_r2_end=t_r2_end;}
+}
+
+//windowed-round-3
+//
+//Same structure as aes_round2_windowed, chained one round further.
+//Round 3 exists only to demonstrate that execution continues past
+//round 2 -- its output/timing is not used to recover any key bits.
+//No internal flush is issued between round 2 and round 3: the
+//attacker is responsible for any eviction in that gap, exactly as
+//it already is between round 1 and round 2.
+//
+//We deliberately do not read back a round-3 "end" timestamp: the
+//caller only needs round3_start (the round-2/round-3 boundary) to
+//build the next windowed gap, mirroring how round1_end is the only
+//boundary timestamp phase 2 needs out of round 1.
+
+void aes_round3_windowed(const uint8_t *plaintext,const uint8_t *key,uint8_t *out, uint64_t *tsc_r1_start, uint64_t *tsc_r1_end,uint64_t *tsc_r2_start,uint64_t *tsc_r2_end,uint64_t *tsc_r3_start){
+    uint8_t state0[16];
+    uint8_t state1_prekey[16];
+    uint8_t round_key_1[16];
+    uint8_t state1[16];
+    uint8_t state2_prekey[16];
+    uint8_t round_key_2[16];
+    uint8_t state2[16];
+    unsigned int aux;
+    uint64_t t_r1_start;
+    uint64_t t_r1_end;
+    uint64_t t_r2_start;
+    uint64_t t_r2_end;
+    uint64_t t_r3_start;
+
+    for(int i=0;i<16;i++){
+        state0[i]=plaintext[i]^key[i];
+    }
+
+    t_r1_start=__rdtscp(&aux);
+    round_ttable_core(state0,state1_prekey);
+    t_r1_end=__rdtscp(&aux);
+    expand_round_key_1(key,round_key_1);
+    for(int i=0;i<16;i++){
+        state1[i]=state1_prekey[i]^round_key_1[i];
+    }
+    aes_phase_delay();
+
+    t_r2_start=__rdtscp(&aux);
+    round_ttable_core(state1,state2_prekey);
+    t_r2_end=__rdtscp(&aux);
+    expand_round_key_2(round_key_1,round_key_2);
+    for(int i=0;i<16;i++){
+        state2[i]=state2_prekey[i]^round_key_2[i];
+    }
+    aes_phase_delay();
+
+    t_r3_start=__rdtscp(&aux);
+    round_ttable_core(state2,out);
+
+    if(tsc_r1_start!=NULL){*tsc_r1_start=t_r1_start;}
+    if(tsc_r1_end!=NULL){*tsc_r1_end=t_r1_end;}
+    if(tsc_r2_start!=NULL){*tsc_r2_start=t_r2_start;}
+    if(tsc_r2_end!=NULL){*tsc_r2_end=t_r2_end;}
+    if(tsc_r3_start!=NULL){*tsc_r3_start=t_r3_start;}
 }

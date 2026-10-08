@@ -5,6 +5,7 @@
 #define CONTROL_MODE_ROUND1 1
 #define CONTROL_MODE_ROUND2 2
 #define CONTROL_MODE_ROUND2_NOFLUSH 3
+#define CONTROL_MODE_ROUND3_NOFLUSH 4
 
 typedef struct{
     volatile uint32_t request_seq;
@@ -18,9 +19,10 @@ typedef struct{
     volatile uint64_t round1_end_tsc;
     volatile uint64_t round2_start_tsc;
     volatile uint64_t round2_end_tsc;
+    volatile uint64_t round3_start_tsc;
     volatile uint8_t sleep_mode_active;
     volatile uint8_t quit;
-    uint8_t padding[32];
+    uint8_t padding[24];
 } control_block_t;
 
 #endif
