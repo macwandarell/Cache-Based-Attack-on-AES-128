@@ -241,7 +241,6 @@ int main(int argc,char **argv){
         //no internal flush between any rounds.
         //execution continues naturally through round 3; the victim is
         //never stopped at a round boundary. Only round3_start is reported
-        //back (round-3 end is not needed by the attacker).
         else if(mode==CONTROL_MODE_ROUND3_NOFLUSH){
             uint64_t tsc_r1_start=0;
             uint64_t tsc_r1_end=0;

